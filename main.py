@@ -279,9 +279,15 @@ def predict_number_with_global_rank_font(image):
 
 def predict_global_rank_number_string_with_configuration(image, template_map, uniform_row_count, segment_threshold):
     resized_image = resize_by_row_count(image, row_count=uniform_row_count)
+    union_match_result, col_max_match_result_map = match_template_for_each_template(template_map, resized_image)
+    index_score_map = local_maxima_with_score(segment_threshold, union_match_result)
+    number_string, font_max_score = predict_each_local_maxima(template_map, col_max_match_result_map, index_score_map)
+    return number_string, font_max_score
 
+def match_template_for_each_template(template_map, resized_image):
     union_match_result = np.zeros(resized_image.shape, dtype=np.double)
     col_max_match_result_map = {}
+
     for key, template in template_map.items():
         match_result = cv.matchTemplate(resized_image, template, cv.TM_CCORR_NORMED)
 
@@ -297,16 +303,35 @@ def predict_global_rank_number_string_with_configuration(image, template_map, un
         )
 
         col_max_match_result_map[key] = np.amax(match_result, axis=0)
-        
-    
-    i = 0
-    previously_low_score = True
+
+    return union_match_result,col_max_match_result_map
+
+def predict_each_local_maxima(template_map, col_max_match_result_map, index_score_map):
     number_string = ""
     font_max_score = 0.0
+
+    for best_i, local_max_score in index_score_map.items():
+        # Now check what character represents in that position
+        char_prediction = ""
+        for key, match_result in col_max_match_result_map.items():
+            col_offset = template_map[key].shape[1] // 2
+            if best_i - col_offset < match_result.shape[0]:
+                if local_max_score == match_result[best_i - col_offset]:
+                    char_prediction = key
+
+        number_string += char_prediction
+            
+        if font_max_score < local_max_score:
+            font_max_score = local_max_score
+    return number_string,font_max_score
+
+def local_maxima_with_score(segment_threshold, union_match_result):
+    i = 0
+    index_score_map = {}
+
     while i < union_match_result.shape[1]:
         score = np.max(union_match_result[:,i])
-        currently_low_score = score < segment_threshold
-        if currently_low_score != previously_low_score:
+        if score >= segment_threshold:
             local_max_score = score
             best_i = i
 
@@ -323,21 +348,23 @@ def predict_global_rank_number_string_with_configuration(image, template_map, un
                 # else: do nothing
             # score < segment_threshold
 
-            # Now check what character represents in that position
-            char_prediction = ""
-            for key, match_result in col_max_match_result_map.items():
-                col_offset = template_map[key].shape[1] // 2
-                if best_i - col_offset < match_result.shape[0]:
-                    if local_max_score == match_result[best_i - col_offset]:
-                        char_prediction = key
+            # stop = False
+            # while not stop:
+            #     i += 1
+            #     score = np.max(union_match_result[:,i])
 
-            number_string += char_prediction
-                
-            if font_max_score < local_max_score:
-                font_max_score = local_max_score
+            #     if score < segment_threshold:
+            #         stop = True
+            #     elif score > local_max_score:
+            #         local_max_score = score
+            #         best_i = i
+            #     # else: do nothing
+            # # score < segment_threshold
+
+            index_score_map[best_i] = local_max_score
 
         i += 1
-    return number_string,font_max_score
+    return index_score_map
 
 def resize_by_row_count(image, row_count):
     col_count = round(image.shape[1] * row_count / image.shape[0])

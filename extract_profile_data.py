@@ -2,6 +2,8 @@ import cv2 as cv
 from cv2 import Mat
 import numpy as np
 
+UNDEFINED_INT = -1
+
 def extract_profile_data(path):
     image = cv.imread(path, cv.IMREAD_UNCHANGED)
     fragments = _extract_profile_data_image_fragments(image)
@@ -11,9 +13,13 @@ def extract_profile_data(path):
         if key == "name":
             result[key] = _predict_string_with_pusab(fragment)
         elif key == "global_rank":
-            result[key] = _predict_number_with_global_rank_font(fragment)
+            global_rank = _predict_number_with_global_rank_font(fragment)
+            if global_rank != UNDEFINED_INT:
+                result[key] = global_rank
         else:
-            result[key] = _predict_number_with_pusab(fragment)
+            numeric_profile_data = _predict_number_with_pusab(fragment)
+            if numeric_profile_data != UNDEFINED_INT:
+                result[key] = numeric_profile_data
 
     if "cp" not in result.keys():
         result["cp"] = 0
@@ -74,53 +80,57 @@ def _extract_profile_data_image_fragments(image):
 
     # Clean bottom section
     bottom_section_idx_list.sort(key=lambda x: values[x, cv.CC_STAT_LEFT])
-    second_element_left = values[bottom_section_idx_list[1], cv.CC_STAT_LEFT]
-    first_element_idx = bottom_section_idx_list[0]
-    first_element_right = values[first_element_idx, cv.CC_STAT_LEFT] + values[first_element_idx, cv.CC_STAT_WIDTH]
-    ref_distance = second_element_left - first_element_right
+    if len(bottom_section_idx_list) >= 2:
+        second_element_left = values[bottom_section_idx_list[1], cv.CC_STAT_LEFT]
+        first_element_idx = bottom_section_idx_list[0]
+        first_element_right = values[first_element_idx, cv.CC_STAT_LEFT] + values[first_element_idx, cv.CC_STAT_WIDTH]
+        ref_distance = second_element_left - first_element_right
 
-    bottom_section_clean_completed = False
-    i = 0
+        bottom_section_clean_completed = False
+        i = 0
 
-    distance_max_error = 0.06
-    while i < len(bottom_section_idx_list) - 1 and not bottom_section_clean_completed:
-        prev_idx = bottom_section_idx_list[i]
-        prev_right = values[prev_idx, cv.CC_STAT_LEFT] + values[prev_idx, cv.CC_STAT_WIDTH]
+        distance_max_error = 0.06
+        while i < len(bottom_section_idx_list) - 1 and not bottom_section_clean_completed:
+            prev_idx = bottom_section_idx_list[i]
+            prev_right = values[prev_idx, cv.CC_STAT_LEFT] + values[prev_idx, cv.CC_STAT_WIDTH]
 
-        j = i + 1
-        expected_distance_found = False
-        while j < len(bottom_section_idx_list) and not expected_distance_found:
-            curr_idx = bottom_section_idx_list[j]
-            left = values[curr_idx, cv.CC_STAT_LEFT]
-            distance = (left - prev_right) / ref_distance
+            j = i + 1
+            expected_distance_found = False
+            while j < len(bottom_section_idx_list) and not expected_distance_found:
+                curr_idx = bottom_section_idx_list[j]
+                left = values[curr_idx, cv.CC_STAT_LEFT]
+                distance = (left - prev_right) / ref_distance
 
-            if distance >= 1 - distance_max_error:
-                expected_distance_found = True
+                if distance >= 1 - distance_max_error:
+                    expected_distance_found = True
+                else:
+                    # dilate_result[label_ids == curr_idx] = 0
+                    bottom_section_idx_list.pop(j)
+
+            # j == len(bottom_section_idx) or distance >= 1
+
+            if abs(distance - 1) > distance_max_error:
+                bottom_section_idx_list = bottom_section_idx_list[:j]
+                bottom_section_clean_completed = True
+
             else:
-                # dilate_result[label_ids == curr_idx] = 0
-                bottom_section_idx_list.pop(j)
-
-        # j == len(bottom_section_idx) or distance >= 1
-
-        if abs(distance - 1) > distance_max_error:
-            bottom_section_idx_list = bottom_section_idx_list[:j]
-            bottom_section_clean_completed = True
-
-        else:
-            i += 1
+                i += 1
     
-    result = {
-        "name": _crop_by_component(thresholded_image, values, top_section_idx_list[2]),
-        "global_rank": _crop_by_component(thresholded_image, values, top_section_idx_list[1]),
-        "stars": _crop_by_component(thresholded_image, values, bottom_section_idx_list[0]),
-        "diamonds": _crop_by_component(thresholded_image, values, bottom_section_idx_list[1]),
-        "secret_coins": _crop_by_component(thresholded_image, values, bottom_section_idx_list[2]),
-        "user_coins": _crop_by_component(thresholded_image, values, bottom_section_idx_list[3]),
-        "demons": _crop_by_component(thresholded_image, values, bottom_section_idx_list[4])
-    }
+    result = {}
 
-    if len(bottom_section_idx_list) == 6:
-        result["cp"] = _crop_by_component(thresholded_image, values, bottom_section_idx_list[5])
+    if len(top_section_idx_list) >= 3:
+        result["name"] = _crop_by_component(thresholded_image, values, top_section_idx_list[2])
+        result["global_rank"] = _crop_by_component(thresholded_image, values, top_section_idx_list[1])
+
+    if len(bottom_section_idx_list) >= 5:
+        result["stars"] = _crop_by_component(thresholded_image, values, bottom_section_idx_list[0])
+        result["diamonds"] = _crop_by_component(thresholded_image, values, bottom_section_idx_list[1])
+        result["secret_coins"] = _crop_by_component(thresholded_image, values, bottom_section_idx_list[2])
+        result["user_coins"] = _crop_by_component(thresholded_image, values, bottom_section_idx_list[3])
+        result["demons"] = _crop_by_component(thresholded_image, values, bottom_section_idx_list[4])
+
+        if len(bottom_section_idx_list) == 6:
+            result["cp"] = _crop_by_component(thresholded_image, values, bottom_section_idx_list[5])
 
     return result
 
@@ -183,7 +193,10 @@ def _predict_number_with_pusab(image):
         predict_char_result = _predict_digit_with_pusab(char_image)
         result += predict_char_result["value"]
 
-    return int(result)
+    if result != "":
+        return int(result)
+    else:
+        return UNDEFINED_INT
 
 def _predict_number_with_global_rank_font(image):
     config_list = [
@@ -237,7 +250,10 @@ def _predict_number_with_global_rank_font(image):
             template_max_score = font_max_score
             most_likely_number_string = number_string
 
-    return int(most_likely_number_string)
+    if most_likely_number_string != "":
+        return int(most_likely_number_string)
+    else:
+        return UNDEFINED_INT
 
 def _predict_global_rank_number_string_with_configuration(image, template_map, uniform_row_count, segment_threshold):
     resized_image = _resize_by_row_count(image, row_count=uniform_row_count)

@@ -22,10 +22,6 @@ if __name__ == "__main__":
     for path, profile in profile_map.items():
         prediction = extract_profile_data(path)
 
-        print(path)
-        print(prediction)
-        print()
-
         for key, value in prediction.items():
             expected_data = profile[key]
             actual_data = prediction[key]
@@ -33,6 +29,10 @@ if __name__ == "__main__":
             if expected_data != actual_data:
                 if type(expected_data) == str:
                     if expected_data.lower() != actual_data.lower():
-                        print("[case insensitive] {} - {}: Expected {}, got {}".format(path, key, expected_data, actual_data))
+                        print("{} - {}: Expected {}, got {} [case insensitive]".format(path, key, expected_data, actual_data))
                 else:
                     print("{} - {}: Expected {}, got {}".format(path, key, expected_data, actual_data))
+
+        for key in profile.keys():
+            if key not in prediction.keys():
+                print("{} - {}: Value not found".format(path, key))

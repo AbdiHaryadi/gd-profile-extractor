@@ -1,40 +1,37 @@
 import cv2 as cv
 from cv2 import Mat
 import numpy as np
-import csv
 
-def extract_profile_data(fragment):
-    fragments = extract_profile_data_image_fragments(fragment)
+def extract_profile_data(path):
+    image = cv.imread(path, cv.IMREAD_UNCHANGED)
+    fragments = _extract_profile_data_image_fragments(image)
 
     result = {}
     for key, fragment in fragments.items():
         if key == "name":
-            result[key] = predict_string_with_pusab(fragment)
+            result[key] = _predict_string_with_pusab(fragment)
         elif key == "global_rank":
-            result[key] = predict_number_with_global_rank_font(fragment)
+            result[key] = _predict_number_with_global_rank_font(fragment)
         else:
-            result[key] = predict_number_with_pusab(fragment)
+            result[key] = _predict_number_with_pusab(fragment)
 
     if "cp" not in result.keys():
         result["cp"] = 0
 
     return result
 
-def extract_profile_data_image_fragments(image):
+def _extract_profile_data_image_fragments(image):
     hsv_image = cv.cvtColor(image, cv.COLOR_RGB2HSV)
     gray_image = np.multiply(1 - hsv_image[:,:,1] / 255, hsv_image[:,:,2] / 255)
     gray_image = np.vectorize(lambda x: x ** (1/2))(gray_image)
     gray_image = (gray_image * 255).astype('uint8')
-    
 
     _, thresholded_image = cv.threshold(gray_image, round(0.8 * 255), 255, cv.THRESH_BINARY)
 
-    thresholded_image = extract_user_profile_fragment(thresholded_image)
+    thresholded_image = _extract_user_profile_fragment(thresholded_image)
     uniform_row_count = 128
     col_count = round(thresholded_image.shape[1] * (uniform_row_count / thresholded_image.shape[0]))
     thresholded_image = cv.resize(thresholded_image, (col_count, uniform_row_count))
-
-    cv.imshow("Image", thresholded_image)
 
     row_midpoint = uniform_row_count // 2
 
@@ -74,13 +71,8 @@ def extract_profile_data_image_fragments(image):
 
     ## Sort top section
     top_section_idx_list.sort(key=lambda x: values[x, cv.CC_STAT_LEFT])
-    # dilate_result[label_ids == top_section_idx_list[0]] = 0 # "Global Rank" word
-
-    # for i in range(3, len(top_section_idx_list)): # In the right of name
-    #     dilate_result[label_ids == top_section_idx_list[i]] = 0
 
     # Clean bottom section
-    # bottom_section_idx_list.sort(key=lambda x: centroid[x][0])
     bottom_section_idx_list.sort(key=lambda x: values[x, cv.CC_STAT_LEFT])
     second_element_left = values[bottom_section_idx_list[1], cv.CC_STAT_LEFT]
     first_element_idx = bottom_section_idx_list[0]
@@ -111,10 +103,6 @@ def extract_profile_data_image_fragments(image):
         # j == len(bottom_section_idx) or distance >= 1
 
         if abs(distance - 1) > distance_max_error:
-            # Clean all to the right
-            # for idx in bottom_section_idx_list[j:]:
-            #     dilate_result[label_ids == idx] = 0
-
             bottom_section_idx_list = bottom_section_idx_list[:j]
             bottom_section_clean_completed = True
 
@@ -122,21 +110,21 @@ def extract_profile_data_image_fragments(image):
             i += 1
     
     result = {
-        "name": crop_by_component(thresholded_image, values, top_section_idx_list[2]),
-        "global_rank": crop_by_component(thresholded_image, values, top_section_idx_list[1]),
-        "stars": crop_by_component(thresholded_image, values, bottom_section_idx_list[0]),
-        "diamonds": crop_by_component(thresholded_image, values, bottom_section_idx_list[1]),
-        "secret_coins": crop_by_component(thresholded_image, values, bottom_section_idx_list[2]),
-        "user_coins": crop_by_component(thresholded_image, values, bottom_section_idx_list[3]),
-        "demons": crop_by_component(thresholded_image, values, bottom_section_idx_list[4])
+        "name": _crop_by_component(thresholded_image, values, top_section_idx_list[2]),
+        "global_rank": _crop_by_component(thresholded_image, values, top_section_idx_list[1]),
+        "stars": _crop_by_component(thresholded_image, values, bottom_section_idx_list[0]),
+        "diamonds": _crop_by_component(thresholded_image, values, bottom_section_idx_list[1]),
+        "secret_coins": _crop_by_component(thresholded_image, values, bottom_section_idx_list[2]),
+        "user_coins": _crop_by_component(thresholded_image, values, bottom_section_idx_list[3]),
+        "demons": _crop_by_component(thresholded_image, values, bottom_section_idx_list[4])
     }
 
     if len(bottom_section_idx_list) == 6:
-        result["cp"] = crop_by_component(thresholded_image, values, bottom_section_idx_list[5])
+        result["cp"] = _crop_by_component(thresholded_image, values, bottom_section_idx_list[5])
 
     return result
 
-def extract_user_profile_fragment(thresholded_image):
+def _extract_user_profile_fragment(thresholded_image):
     # Identify horizontal and vertical line for row and col min-max
     row_count, col_count = thresholded_image.shape
     quart_row_index = row_count // 4
@@ -151,8 +139,7 @@ def extract_user_profile_fragment(thresholded_image):
 
     return thresholded_image[row_min:row_max, col_min:col_max]
 
-
-def crop_by_component(thresholded_image, values, idx):
+def _crop_by_component(thresholded_image, values, idx):
     left = values[idx, cv.CC_STAT_LEFT]
     right = left + values[idx, cv.CC_STAT_WIDTH]
     top = values[idx, cv.CC_STAT_TOP]
@@ -160,7 +147,7 @@ def crop_by_component(thresholded_image, values, idx):
 
     return thresholded_image[top:bottom, left:right]
 
-def predict_string_with_pusab(image):
+def _predict_string_with_pusab(image):
     analysis = cv.connectedComponentsWithStats(image, 4, cv.CV_32S)
     (label_count, _, values, _) = analysis
 
@@ -174,12 +161,12 @@ def predict_string_with_pusab(image):
         right = left + values[idx, cv.CC_STAT_WIDTH]
         char_image = image[:,left:right]
 
-        predict_char_result = predict_char_with_pusab(char_image)
+        predict_char_result = _predict_char_with_pusab(char_image)
         result += predict_char_result["value"]
 
     return result
 
-def predict_number_with_pusab(image):
+def _predict_number_with_pusab(image):
     analysis = cv.connectedComponentsWithStats(image, 4, cv.CV_32S)
     (label_count, _, values, _) = analysis
 
@@ -193,37 +180,12 @@ def predict_number_with_pusab(image):
         right = left + values[idx, cv.CC_STAT_WIDTH]
         char_image = image[:,left:right]
 
-        predict_char_result = predict_digit_with_pusab(char_image)
+        predict_char_result = _predict_digit_with_pusab(char_image)
         result += predict_char_result["value"]
 
     return int(result)
 
-def predict_number_with_pusab_with_second_method(image):
-    uniform_row_count = 47
-    template_map = {
-        "0": cv.imread('dataset/fonts/pusabgd/0.png', cv.IMREAD_UNCHANGED),
-        "1": cv.imread('dataset/fonts/pusabgd/1.png', cv.IMREAD_UNCHANGED),
-        "2": cv.imread('dataset/fonts/pusabgd/2.png', cv.IMREAD_UNCHANGED),
-        "3": cv.imread('dataset/fonts/pusabgd/3.png', cv.IMREAD_UNCHANGED),
-        "4": cv.imread('dataset/fonts/pusabgd/4.png', cv.IMREAD_UNCHANGED),
-        "5": cv.imread('dataset/fonts/pusabgd/5.png', cv.IMREAD_UNCHANGED),
-        "6": cv.imread('dataset/fonts/pusabgd/6.png', cv.IMREAD_UNCHANGED),
-        "7": cv.imread('dataset/fonts/pusabgd/7.png', cv.IMREAD_UNCHANGED),
-        "8": cv.imread('dataset/fonts/pusabgd/8.png', cv.IMREAD_UNCHANGED),
-        "9": cv.imread('dataset/fonts/pusabgd/9.png', cv.IMREAD_UNCHANGED),
-    }
-    segment_threshold = 0.91
-
-    number_string, font_max_score = predict_global_rank_number_string_with_configuration(
-        image,
-        template_map=template_map,
-        uniform_row_count=uniform_row_count,
-        segment_threshold=segment_threshold
-    )
-
-    return int(number_string)
-
-def predict_number_with_global_rank_font(image):
+def _predict_number_with_global_rank_font(image):
     config_list = [
         {
             "uniform_row_count": 60,
@@ -264,7 +226,7 @@ def predict_number_with_global_rank_font(image):
     template_max_score = 0.0
 
     for config in config_list:
-        number_string, font_max_score = predict_global_rank_number_string_with_configuration(
+        number_string, font_max_score = _predict_global_rank_number_string_with_configuration(
             image,
             template_map=config["template_map"],
             uniform_row_count=config["uniform_row_count"],
@@ -277,14 +239,14 @@ def predict_number_with_global_rank_font(image):
 
     return int(most_likely_number_string)
 
-def predict_global_rank_number_string_with_configuration(image, template_map, uniform_row_count, segment_threshold):
-    resized_image = resize_by_row_count(image, row_count=uniform_row_count)
-    union_match_result, col_max_match_result_map = match_template_for_each_template(template_map, resized_image)
-    index_score_map = local_maxima_with_score(segment_threshold, union_match_result)
-    number_string, font_max_score = predict_each_local_maxima(template_map, col_max_match_result_map, index_score_map)
+def _predict_global_rank_number_string_with_configuration(image, template_map, uniform_row_count, segment_threshold):
+    resized_image = _resize_by_row_count(image, row_count=uniform_row_count)
+    union_match_result, col_max_match_result_map = _match_template_for_each_template(template_map, resized_image)
+    index_score_map = _local_maxima_with_score(segment_threshold, union_match_result)
+    number_string, font_max_score = _predict_each_local_maxima(template_map, col_max_match_result_map, index_score_map)
     return number_string, font_max_score
 
-def match_template_for_each_template(template_map, resized_image):
+def _match_template_for_each_template(template_map, resized_image):
     union_match_result = np.zeros(resized_image.shape, dtype=np.double)
     col_max_match_result_map = {}
 
@@ -306,7 +268,7 @@ def match_template_for_each_template(template_map, resized_image):
 
     return union_match_result,col_max_match_result_map
 
-def predict_each_local_maxima(template_map, col_max_match_result_map, index_score_map):
+def _predict_each_local_maxima(template_map, col_max_match_result_map, index_score_map):
     number_string = ""
     font_max_score = 0.0
 
@@ -325,7 +287,7 @@ def predict_each_local_maxima(template_map, col_max_match_result_map, index_scor
             font_max_score = local_max_score
     return number_string,font_max_score
 
-def local_maxima_with_score(segment_threshold, union_match_result):
+def _local_maxima_with_score(segment_threshold, union_match_result):
     i = 0
     index_score_map = {}
 
@@ -348,29 +310,16 @@ def local_maxima_with_score(segment_threshold, union_match_result):
                 # else: do nothing
             # score < segment_threshold
 
-            # stop = False
-            # while not stop:
-            #     i += 1
-            #     score = np.max(union_match_result[:,i])
-
-            #     if score < segment_threshold:
-            #         stop = True
-            #     elif score > local_max_score:
-            #         local_max_score = score
-            #         best_i = i
-            #     # else: do nothing
-            # # score < segment_threshold
-
             index_score_map[best_i] = local_max_score
 
         i += 1
     return index_score_map
 
-def resize_by_row_count(image, row_count):
+def _resize_by_row_count(image, row_count):
     col_count = round(image.shape[1] * row_count / image.shape[0])
     return cv.resize(image, (col_count, row_count))
 
-def predict_char_with_pusab(char_image: Mat):
+def _predict_char_with_pusab(char_image: Mat):
     template_map = {
         "A": cv.imread('dataset/fonts/pusabgd/a_upper.png', cv.IMREAD_UNCHANGED),
         "B": cv.imread('dataset/fonts/pusabgd/b_upper.png', cv.IMREAD_UNCHANGED),
@@ -436,9 +385,9 @@ def predict_char_with_pusab(char_image: Mat):
         "9": cv.imread('dataset/fonts/pusabgd/9.png', cv.IMREAD_UNCHANGED),
     }
 
-    return predict_char_with_predefined_pusab_template_map(char_image, template_map)
+    return _predict_char_with_predefined_pusab_template_map(char_image, template_map)
 
-def predict_digit_with_pusab(char_image: Mat):
+def _predict_digit_with_pusab(char_image: Mat):
     template_map = {
         "0": cv.imread('dataset/fonts/pusabgd/0.png', cv.IMREAD_UNCHANGED),
         "1": cv.imread('dataset/fonts/pusabgd/1.png', cv.IMREAD_UNCHANGED),
@@ -452,37 +401,15 @@ def predict_digit_with_pusab(char_image: Mat):
         "9": cv.imread('dataset/fonts/pusabgd/9.png', cv.IMREAD_UNCHANGED),
     }
 
-    return predict_char_with_predefined_pusab_template_map(char_image, template_map)
+    return _predict_char_with_predefined_pusab_template_map(char_image, template_map)
 
-def predict_digit_with_aller(char_image: Mat):
-    template_map = {
-        "0": cv.imread('dataset/fonts/aller/0.png', cv.IMREAD_UNCHANGED),
-        "1": cv.imread('dataset/fonts/aller/1.png', cv.IMREAD_UNCHANGED),
-        "2": cv.imread('dataset/fonts/aller/2.png', cv.IMREAD_UNCHANGED),
-        "3": cv.imread('dataset/fonts/aller/3.png', cv.IMREAD_UNCHANGED),
-        "4": cv.imread('dataset/fonts/aller/4.png', cv.IMREAD_UNCHANGED),
-        "5": cv.imread('dataset/fonts/aller/5.png', cv.IMREAD_UNCHANGED),
-        "6": cv.imread('dataset/fonts/aller/6.png', cv.IMREAD_UNCHANGED),
-        "7": cv.imread('dataset/fonts/aller/7.png', cv.IMREAD_UNCHANGED),
-        "8": cv.imread('dataset/fonts/aller/8.png', cv.IMREAD_UNCHANGED),
-        "9": cv.imread('dataset/fonts/aller/9.png', cv.IMREAD_UNCHANGED),
-    }
-
-    return predict_char_with_predefined_aller_template_map(char_image, template_map)
-
-def predict_char_with_predefined_pusab_template_map(char_image, pusab_template_map):
+def _predict_char_with_predefined_pusab_template_map(char_image, pusab_template_map):
     uniform_char_row_count = 47
     padded_col_count = 60
 
-    return predict_char_with_predefined_template_map(char_image, pusab_template_map, uniform_char_row_count, padded_col_count)
+    return _predict_char_with_predefined_template_map(char_image, pusab_template_map, uniform_char_row_count, padded_col_count)
 
-def predict_char_with_predefined_aller_template_map(char_image, aller_template_map):
-    uniform_char_row_count = 60
-    padded_col_count = 120
-
-    return predict_char_with_predefined_template_map(char_image, aller_template_map, uniform_char_row_count, padded_col_count)
-
-def predict_char_with_predefined_template_map(char_image, template_map, uniform_char_row_count, padded_col_count):
+def _predict_char_with_predefined_template_map(char_image, template_map, uniform_char_row_count, padded_col_count):
     char_col_count = round(char_image.shape[1] * uniform_char_row_count / char_image.shape[0])
     resized_char_image = cv.resize(char_image, (char_col_count, uniform_char_row_count))
 
@@ -503,44 +430,3 @@ def predict_char_with_predefined_template_map(char_image, template_map, uniform_
             best_char = key
 
     return { "value": best_char, "score": best_score }
-
-if __name__ == "__main__":
-    ss_dir = "dataset/screenshots/"
-
-    profile_map = {}
-    with open("dataset/screenshots_label.csv", newline="") as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            profile = {}
-            path = ss_dir + row["filename"]
-            for key, value in row.items():
-                if key != "filename":
-                    if key == "name":
-                        profile[key] = value
-                    else:
-                        profile[key] = int(value)
-
-            profile_map[path] = profile
-
-    for path, profile in profile_map.items():
-        image = cv.imread(path, cv.IMREAD_UNCHANGED)
-        prediction = extract_profile_data(image)
-
-        print(path)
-        print(prediction)
-        print()
-
-        for key, value in prediction.items():
-            expected_data = profile[key]
-            actual_data = prediction[key]
-            
-            if expected_data != actual_data:
-                if type(expected_data) == str:
-                    if expected_data.lower() != actual_data.lower():
-                        print("[case insensitive] {} - {}: Expected {}, got {}".format(path, key, expected_data, actual_data))
-                else:
-                    print("{} - {}: Expected {}, got {}".format(path, key, expected_data, actual_data))
-            
-        k = cv.waitKey(0)
-
-    cv.destroyAllWindows()
